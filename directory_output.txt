@@ -1,0 +1,651 @@
+[DIR] Feature
+  [DIR] Auth
+    [FILE] AuthenticationTest.php
+        <?php
+        
+        use App\Models\User;
+        use App\Models\MaintenanceRequest;
+        
+        test('login screen can be rendered', function () {
+            $response = $this->get('/login');
+        
+            $response->assertStatus(200);
+        });
+        
+        test('admin redirected to requests index after login', function () {
+            $admin = User::factory()->create(['is_admin' => true]);
+            
+            $this->post('/login', [
+                'email' => $admin->email,
+                'password' => 'password'
+            ])->assertRedirect(route('requests.index')); // NOT /dashboard
+        });
+        
+        test('regular users are redirected to dashboard after login', function () {
+            $user = User::factory()->create(['is_admin' => false]);
+        
+            $this->post('/login', [
+                'email' => $user->email,
+                'password' => 'password',
+            ])->assertRedirect(route('dashboard'));
+        });
+        
+        test('non-admin cannot access request edit page for others', function () {
+            $user = User::factory()->create();
+            $otherUserRequest = MaintenanceRequest::factory()->create();
+            
+            $this->actingAs($user)
+                 ->get(route('requests.edit', $otherUserRequest))
+                 ->assertForbidden();
+        });
+        
+        test('non-admin can access their own request edit page', function () {
+            $user = User::factory()->create();
+            $userRequest = MaintenanceRequest::factory()->create(['user_id' => $user->id]);
+            
+            $this->actingAs($user)
+                 ->get(route('requests.edit', $userRequest))
+                 ->assertOk();
+        });
+        
+        test('admin can access any request edit page', function () {
+            $admin = User::factory()->create(['is_admin' => true]);
+            $otherUserRequest = MaintenanceRequest::factory()->create();
+            
+            $this->actingAs($admin)
+                 ->get(route('requests.edit', $otherUserRequest))
+                 ->assertOk();
+        });
+        
+        
+        test('users can authenticate using the login screen', function () {
+            $user = User::factory()->create();
+        
+            $response = $this->post('/login', [
+                'email' => $user->email,
+                'password' => 'password',
+            ]);
+        
+            $this->assertAuthenticated();
+            $response->assertRedirect(route('dashboard', absolute: false));
+        });
+        
+        test('users can not authenticate with invalid password', function () {
+            $user = User::factory()->create();
+        
+            $this->post('/login', [
+                'email' => $user->email,
+                'password' => 'wrong-password',
+            ]);
+        
+            $this->assertGuest();
+        });
+        
+        test('users can logout', function () {
+            $user = User::factory()->create();
+        
+            $response = $this->actingAs($user)->post('/logout');
+        
+            $this->assertGuest();
+            $response->assertRedirect('/');
+        });
+        
+        test('non-admins cannot view others requests', function () {
+            $user = User::factory()->create();
+            $otherRequest = MaintenanceRequest::factory()->create();
+        
+            $this->actingAs($user)
+                 ->get(route('requests.show', $otherRequest))
+                 ->assertForbidden();
+        });
+        
+        test('guest is redirected to login when accessing profile', function () {
+            $response = $this->get('/profile');
+        
+            $response->assertRedirect('/login');
+        });
+        
+        
+    [FILE] EmailVerificationTest.php
+        <?php
+        
+        use App\Models\User;
+        use Illuminate\Auth\Events\Verified;
+        use Illuminate\Support\Facades\Event;
+        use Illuminate\Support\Facades\URL;
+        
+        test('email verification screen can be rendered', function () {
+            $user = User::factory()->unverified()->create();
+        
+            $response = $this->actingAs($user)->get('/verify-email');
+        
+            $response->assertStatus(200);
+        });
+        
+        test('email can be verified', function () {
+            $user = User::factory()->unverified()->create();
+        
+            Event::fake();
+        
+            $verificationUrl = URL::temporarySignedRoute(
+                'verification.verify',
+                now()->addMinutes(60),
+                ['id' => $user->id, 'hash' => sha1($user->email)]
+            );
+        
+            $response = $this->actingAs($user)->get($verificationUrl);
+        
+            Event::assertDispatched(Verified::class);
+            expect($user->fresh()->hasVerifiedEmail())->toBeTrue();
+            $response->assertRedirect(route('dashboard', absolute: false).'?verified=1');
+        });
+        
+        test('email is not verified with invalid hash', function () {
+            $user = User::factory()->unverified()->create();
+        
+            $verificationUrl = URL::temporarySignedRoute(
+                'verification.verify',
+                now()->addMinutes(60),
+                ['id' => $user->id, 'hash' => sha1('wrong-email')]
+            );
+        
+            $this->actingAs($user)->get($verificationUrl);
+        
+            expect($user->fresh()->hasVerifiedEmail())->toBeFalse();
+        });
+        
+    [FILE] PasswordConfirmationTest.php
+        <?php
+        
+        use App\Models\User;
+        
+        test('confirm password screen can be rendered', function () {
+            $user = User::factory()->create();
+        
+            $response = $this->actingAs($user)->get('/confirm-password');
+        
+            $response->assertStatus(200);
+        });
+        
+        test('password can be confirmed', function () {
+            $user = User::factory()->create();
+        
+            $response = $this->actingAs($user)->post('/confirm-password', [
+                'password' => 'password',
+            ]);
+        
+            $response->assertRedirect();
+            $response->assertSessionHasNoErrors();
+        });
+        
+        test('password is not confirmed with invalid password', function () {
+            $user = User::factory()->create();
+        
+            $response = $this->actingAs($user)->post('/confirm-password', [
+                'password' => 'wrong-password',
+            ]);
+        
+            $response->assertSessionHasErrors();
+        });
+        
+        test('password update fails with short password', function () {
+            $user = User::factory()->create();
+        
+            $response = $this->actingAs($user)->put('/password', [
+                'current_password' => 'password',
+                'password' => 'short',
+                'password_confirmation' => 'short',
+            ]);
+        
+            $response->assertSessionHasErrors('password');
+        });
+        
+    [FILE] PasswordResetTest.php
+        <?php
+        
+        use App\Models\User;
+        use Illuminate\Auth\Notifications\ResetPassword;
+        use Illuminate\Support\Facades\Notification;
+        
+        test('reset password link screen can be rendered', function () {
+            $response = $this->get('/forgot-password');
+        
+            $response->assertStatus(200);
+        });
+        
+        test('reset password link can be requested', function () {
+            Notification::fake();
+        
+            $user = User::factory()->create();
+        
+            $this->post('/forgot-password', ['email' => $user->email]);
+        
+            Notification::assertSentTo($user, ResetPassword::class);
+        });
+        
+        test('reset password screen can be rendered', function () {
+            Notification::fake();
+        
+            $user = User::factory()->create();
+        
+            $this->post('/forgot-password', ['email' => $user->email]);
+        
+            Notification::assertSentTo($user, ResetPassword::class, function ($notification) {
+                $response = $this->get('/reset-password/'.$notification->token);
+        
+                $response->assertStatus(200);
+        
+                return true;
+            });
+        });
+        
+        test('password can be reset with valid token', function () {
+            Notification::fake();
+        
+            $user = User::factory()->create();
+        
+            $this->post('/forgot-password', ['email' => $user->email]);
+        
+            Notification::assertSentTo($user, ResetPassword::class, function ($notification) use ($user) {
+                $response = $this->post('/reset-password', [
+                    'token' => $notification->token,
+                    'email' => $user->email,
+                    'password' => 'password',
+                    'password_confirmation' => 'password',
+                ]);
+        
+                $response
+                    ->assertSessionHasNoErrors()
+                    ->assertRedirect(route('login'));
+        
+                return true;
+            });
+        });
+        
+    [FILE] PasswordUpdateTest.php
+        <?php
+        
+        use App\Models\User;
+        use Illuminate\Support\Facades\Hash;
+        
+        test('password can be updated', function () {
+            $user = User::factory()->create();
+        
+            $response = $this
+                ->actingAs($user)
+                ->from('/profile')
+                ->put('/password', [
+                    'current_password' => 'password',
+                    'password' => 'new-password',
+                    'password_confirmation' => 'new-password',
+                ]);
+        
+            $response
+                ->assertSessionHasNoErrors()
+                ->assertRedirect('/profile');
+        
+            $this->assertTrue(Hash::check('new-password', $user->refresh()->password));
+        });
+        
+        test('correct password must be provided to update password', function () {
+            $user = User::factory()->create();
+        
+            $response = $this
+                ->actingAs($user)
+                ->from('/profile')
+                ->put('/password', [
+                    'current_password' => 'wrong-password',
+                    'password' => 'new-password',
+                    'password_confirmation' => 'new-password',
+                ]);
+        
+            $response
+                ->assertSessionHasErrorsIn('updatePassword', 'current_password')
+                ->assertRedirect('/profile');
+        });
+        
+    [FILE] RegistrationTest.php
+        <?php
+        
+        test('registration screen can be rendered', function () {
+            $response = $this->get('/register');
+        
+            $response->assertStatus(200);
+        });
+        
+        test('new users can register', function () {
+            $response = $this->post('/register', [
+                'name' => 'Test User',
+                'email' => 'test@example.com',
+                'password' => 'password',
+                'password_confirmation' => 'password',
+            ]);
+        
+            $this->assertAuthenticated();
+            $response->assertRedirect(route('dashboard', absolute: false));
+        });
+        
+  [FILE] ExampleTest.php
+      <?php
+      
+      it('returns a successful response', function () {
+          $response = $this->get('/login');
+      
+          $response->assertStatus(200);
+      });
+      
+  [DIR] Maintenance
+    [FILE] CreateMaintenanceRequestTest.php
+        <?php
+        
+        use App\Models\User;
+        use App\Models\MaintenanceRequest;
+        use function Pest\Laravel\{actingAs, post};
+        
+        it('creates a maintenance request', function () {
+            $user = User::factory()->create();
+            actingAs($user);
+        
+            $response = post('/maintenance', [
+                'title' => 'Fix AC',
+                'description' => 'The AC in Room 2 isn’t working',
+                'urgency' => 'high',
+            ]);
+        
+            $response->assertRedirect(); // assuming redirect back
+            $this->assertDatabaseHas('maintenance_requests', [
+                'title' => 'Fix AC',
+                'user_id' => $user->id,
+            ]);
+        });
+        
+    [FILE] NotificationTest.php
+        <?php
+        
+        namespace Tests\Feature\Maintenance;
+        
+        use App\Models\User;
+        use App\Models\MaintenanceRequest;
+        use Illuminate\Support\Facades\Notification;
+        use App\Notifications\RequestStatusChanged;
+        use function Pest\Laravel\{actingAs, patch};
+        
+        it('sends notification on status change', function () {
+            Notification::fake();
+        
+            $admin = User::factory()->create(['is_admin' => true]);
+            $user = User::factory()->create();
+            $request = MaintenanceRequest::factory()->create([
+                'user_id' => $user->id,
+                'status' => 'pending',
+            ]);
+        
+            actingAs($admin);
+            patch("/maintenance/{$request->id}/status", [
+                'status' => 'in_progress',
+            ]);
+        
+            Notification::assertSentTo($user, RequestStatusChanged::class);
+        });
+        
+    [FILE] PolicyTest.php
+        <?php
+        
+        use App\Models\User;
+        use App\Models\MaintenanceRequest;
+        use function Pest\Laravel\{actingAs, patch};
+        
+        it('prevents non-admins from changing status', function () {
+            $user = User::factory()->create();
+            $request = MaintenanceRequest::factory()->create(['status' => 'pending']);
+        
+            actingAs($user);
+            $response = patch("/maintenance/{$request->id}/status", [
+                'status' => 'completed',
+            ]);
+        
+            $response->assertForbidden();
+        });
+        
+    [FILE] UpdateRequestStatusTest.php
+        <?php 
+        
+        use App\Models\User;
+        use App\Models\MaintenanceRequest;
+        use function Pest\Laravel\{actingAs, patch};
+        
+        it('allows admin to update maintenance status', function () {
+            $admin = User::factory()->create(['is_admin' => true]);
+            $request = MaintenanceRequest::factory()->create(['status' => 'pending']);
+        
+            actingAs($admin);
+            $response = patch("/maintenance/{$request->id}/status", [
+                'status' => 'completed',
+            ]);
+        
+            $response->assertRedirect();
+            $this->assertDatabaseHas('maintenance_requests', [
+                'id' => $request->id,
+                'status' => 'completed',
+            ]);
+        });
+        
+    [FILE] ViewMaintenanceRequestsTest.php
+        <?php
+        
+        
+        namespace Tests\Feature\Maintenance;
+        
+        use App\Models\MaintenanceRequest;
+        use App\Models\User;
+        use Illuminate\Foundation\Testing\RefreshDatabase;
+        use Tests\TestCase;
+        
+        class ViewMaintenanceRequestsTest extends TestCase
+        {
+            use RefreshDatabase;
+        
+            public function test_admin_sees_all_requests()
+            {
+                $admin = User::factory()->create(['is_admin' => true]);
+                $request = MaintenanceRequest::factory()->create();
+        
+                $this->actingAs($admin)
+                    ->get(route('requests.index'))
+                    ->assertSee($request->title);
+            }
+        }
+        
+  [FILE] ProfileTest.php
+      <?php
+      
+      use App\Models\User;
+      
+      test('profile page is displayed', function () {
+          $user = User::factory()->create();
+      
+          $response = $this
+              ->actingAs($user)
+              ->get('/profile');
+      
+          $response->assertOk();
+      });
+      
+      test('profile information can be updated', function () {
+          $user = User::factory()->create();
+      
+          $response = $this
+              ->actingAs($user)
+              ->patch('/profile', [
+                  'name' => 'Test User',
+                  'email' => 'test@example.com',
+              ]);
+      
+          $response
+              ->assertSessionHasNoErrors()
+              ->assertRedirect('/profile');
+      
+          $user->refresh();
+      
+          $this->assertSame('Test User', $user->name);
+          $this->assertSame('test@example.com', $user->email);
+          $this->assertNull($user->email_verified_at);
+      });
+      
+      test('email verification status is unchanged when the email address is unchanged', function () {
+          $user = User::factory()->create();
+      
+          $response = $this
+              ->actingAs($user)
+              ->patch('/profile', [
+                  'name' => 'Test User',
+                  'email' => $user->email,
+              ]);
+      
+          $response
+              ->assertSessionHasNoErrors()
+              ->assertRedirect('/profile');
+      
+          $this->assertNotNull($user->refresh()->email_verified_at);
+      });
+      
+      test('user can delete their account', function () {
+          $user = User::factory()->create();
+      
+          $response = $this
+              ->actingAs($user)
+              ->delete('/profile', [
+                  'password' => 'password',
+              ]);
+      
+          $response
+              ->assertSessionHasNoErrors()
+              ->assertRedirect('/');
+      
+          $this->assertGuest();
+          $this->assertNull($user->fresh());
+      });
+      
+      test('correct password must be provided to delete account', function () {
+          $user = User::factory()->create();
+      
+          $response = $this
+              ->actingAs($user)
+              ->from('/profile')
+              ->delete('/profile', [
+                  'password' => 'wrong-password',
+              ]);
+      
+          $response
+              ->assertSessionHasErrorsIn('userDeletion', 'password')
+              ->assertRedirect('/profile');
+      
+          $this->assertNotNull($user->fresh());
+      });
+      
+  [FILE] RequestControllerTest.php
+      <?php
+      
+      use App\Models\Request;
+      use Illuminate\Foundation\Testing\RefreshDatabase;
+      use Tests\TestCase;
+      
+      class RequestControllerTest extends TestCase
+      {
+          use RefreshDatabase;
+      
+      
+          public function test_it_displays_requests_list()
+          {
+              Request::factory()->count(3)->create();
+      
+              $response = $this->get(route('requests.index'));
+      
+              $response->assertStatus(200);
+              $response->assertSee(Request::first()->title);
+          }
+      
+          public function test_it_creates_a_request()
+          {
+              $data = [
+                  'title' => 'Test title',
+                  'priority' => 'High',
+                  'status' => 'Pending',
+              ];
+      
+              $response = $this->post(route('requests.store'), $data);
+      
+              $response->assertRedirect();
+              $this->assertDatabaseHas('requests', $data);
+          }
+      }
+      
+[FILE] Pest.php
+    <?php
+    
+    /*
+    |--------------------------------------------------------------------------
+    | Test Case
+    |--------------------------------------------------------------------------
+    |
+    | The closure you provide to your test functions is always bound to a specific PHPUnit test
+    | case class. By default, that class is "PHPUnit\Framework\TestCase". Of course, you may
+    | need to change it using the "pest()" function to bind a different classes or traits.
+    |
+    */
+    
+    pest()->extend(Tests\TestCase::class)
+        ->use(Illuminate\Foundation\Testing\RefreshDatabase::class)
+        ->in('Feature');
+    
+    /*
+    |--------------------------------------------------------------------------
+    | Expectations
+    |--------------------------------------------------------------------------
+    |
+    | When you're writing tests, you often need to check that values meet certain conditions. The
+    | "expect()" function gives you access to a set of "expectations" methods that you can use
+    | to assert different things. Of course, you may extend the Expectation API at any time.
+    |
+    */
+    
+    expect()->extend('toBeOne', function () {
+        return $this->toBe(1);
+    });
+    
+    /*
+    |--------------------------------------------------------------------------
+    | Functions
+    |--------------------------------------------------------------------------
+    |
+    | While Pest is very powerful out-of-the-box, you may have some testing code specific to your
+    | project that you don't want to repeat in every file. Here you can also expose helpers as
+    | global functions to help you to reduce the number of lines of code in your test files.
+    |
+    */
+    
+    function something()
+    {
+        // ..
+    }
+    
+[FILE] TestCase.php
+    <?php
+    
+    namespace Tests;
+    
+    use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+    
+    abstract class TestCase extends BaseTestCase
+    {
+        //
+    }
+    
+[DIR] Unit
+  [FILE] ExampleTest.php
+      <?php
+      
+      test('that true is true', function () {
+          expect(true)->toBeTrue();
+      });
+      
