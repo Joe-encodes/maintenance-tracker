@@ -21,6 +21,9 @@ WORKDIR /app
 
 COPY --from=composer /app /app
 
+# ✅ Create the SQLite file (inside the image)
+RUN touch /app/database/database.sqlite
+
 EXPOSE 8000
 
 CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
