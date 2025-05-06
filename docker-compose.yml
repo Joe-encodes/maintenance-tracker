@@ -8,9 +8,12 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      - ./.env:/app/.env
       - ./database/database.sqlite:/app/database/database.sqlite
     environment:
       DB_CONNECTION: sqlite
       DB_DATABASE: /app/database/database.sqlite
+      APP_DEBUG: true
     command: >
-      sh -c "php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=8000"
+      bash -c "php artisan migrate --force &&
+      php artisan serve --host=0.0.0.0 --port=8000"
