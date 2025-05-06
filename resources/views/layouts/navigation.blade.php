@@ -9,7 +9,7 @@
                       <img
                         src="{{ asset('favicon-32x32.png') }}"
                         alt="{{ config('app.name') }} Logo"
-                        class="h-8 sm:h-10 md:h-12 lg:h-16 xl:h-20 w-auto"
+                        class="h-6 sm:h-3 md:h-5 lg:h-10 xl:h-15 w-auto"
                       >
                       <span class="ml-3 text-xl font-bold text-gray-900 dark:text-gray-100">
                         {{ config('app.name') }}
@@ -21,6 +21,9 @@
                 <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
                     <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
                         {{ __('Dashboard') }}
+                    </x-nav-link>
+                    <x-nav-link :href="route('requests.index')" :active="request()->routeIs('requests.index')">
+                        {{ __('Requests') }}
                     </x-nav-link>
                 </div>
             </div>

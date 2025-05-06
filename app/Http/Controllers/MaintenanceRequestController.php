@@ -46,9 +46,9 @@ class MaintenanceRequestController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
+    public function store(Request $maintenance_request)
     {
-        $validated = $request->validate([
+        $validated = $maintenance_request->validate([
             'title' => 'required|max:255',
             'description' => 'required',
             'priority' => 'required|in:Low,Medium,High'
@@ -71,32 +71,32 @@ class MaintenanceRequestController extends Controller
      * Show the form for editing the specified resource.
      * Edit request (only for admins/owners)
      */
-    public function edit(MaintenanceRequest $request)
+    public function edit(MaintenanceRequest $maintenance_request)
 
     {
-        $this->authorize('update', $request);
-        return view('requests.edit', compact('request'));
+        $this->authorize('update', $maintenance_request);
+        return view('requests.edit', compact('maintenance_request'));
     }
 
     /**
      * Update the specified resource in storage.
      * Update Request Status
      */
-    public function update(Request $req, MaintenanceRequest $request)
+    public function update(Request $req, MaintenanceRequest $maintenance_request)
     {
-        $this->authorize('update', $request);
+        $this->authorize('update', $maintenance_request);
 
-        $oldStatus = $request->status;
+        $oldStatus = $maintenance_request->status;
 
         $validated = $req->validate([
             'status' => 'required|in:Pending,Awaiting Approval,In Progress,Completed'
         ]);
 
-        $request->update($validated);
+        $maintenance_request->update($validated);
 
         // Send notification only if status is changed
         if ($oldStatus !== $validated['status']) {
-            $request->user->notify(new RequestStatusChanged($request, $oldStatus));
+            $maintenance_request->user->notify(new RequestStatusChanged($maintenance_request, $oldStatus));
         }
 
         return redirect()->route('requests.index')->with('success', 'Request Status updated!');
@@ -105,10 +105,10 @@ class MaintenanceRequestController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(MaintenanceRequest $request)
+    public function destroy(MaintenanceRequest $maintenance_request)
     {
-        $this->authorize('delete', $request);
-        $request->delete();
+        $this->authorize('delete', $maintenance_request);
+        $maintenance_request->delete();
 
         return back()->with('success', 'Request deleted!');
     }

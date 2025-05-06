@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\MaintenanceRequestController;
 
 Route::get('/',function () {
-    return redirect()->route('requests.index');
+    return redirect()->route('register');
 });
 
 Route::resource('requests', MaintenanceRequestController::class);
