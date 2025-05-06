@@ -16,8 +16,15 @@ COPY . .
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Ensure .env exists
-# RUN cp .env.example .env || true
+# Install Node.js, npm, and Vite (for asset building)
+RUN curl -sL https://deb.nodesource.com/setup_16.x | bash - && \
+    apt-get install -y nodejs
+
+# Install frontend dependencies (npm install)
+RUN npm install
+
+# Build frontend assets with Vite
+RUN npm run build
 
 # Ensure SQLite database exists
 RUN mkdir -p database && touch database/database.sqlite
