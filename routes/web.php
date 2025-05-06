@@ -10,4 +10,11 @@ Route::get('/',function () {
 
 Route::resource('requests', MaintenanceRequestController::class);
 
+Route::get('/debug-key', function () {
+    return [
+        'env' => env('APP_KEY'),
+        'config' => config('app.key'),
+    ];
+});
+
 require __DIR__.'/auth.php';
